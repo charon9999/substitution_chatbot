@@ -63,9 +63,7 @@ SOURCE ITEM (user-provided):
 - Description: {source_item['description']}
 - Supercategory: {source_item['supercategory']}
 - Category: {source_item['category']}
-- Quantity Bought: {source_item['quantity']} {source_item.get('quantity_unit', '')}
-- Unit Price Paid: ${source_item['unit_price']} per unit
-- Total Price Paid: ${source_item['total_price']} (for all {source_item['quantity']} units)
+- Quantity Needed: {source_item['quantity']} {source_item.get('quantity_unit', '')}
 
 CANDIDATE PRODUCTS FROM OUR CATALOG:
 {candidates_info}

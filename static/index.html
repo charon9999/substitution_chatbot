@@ -169,8 +169,8 @@
       const supercategory = document.getElementById('supercategory').value;
       const category = document.getElementById('category').value;
       const quantity = parseFloat(document.getElementById('quantity').value);
-      const unit_price = parseFloat(document.getElementById('unit_price').value);
-      const total_price = parseFloat(document.getElementById('total_price').value);
+      const unit_price = parseFloat(document.getElementById('unit_price').value) || 0;
+      const total_price = parseFloat(document.getElementById('total_price').value) || 0;
 
       if (!name || !supercategory || !category || !quantity) {
         alert('Please fill in all required fields (name, supercategory, category, quantity).');
@@ -205,11 +205,18 @@
 
         if (!res.ok) {
           const err = await res.json();
+          if (res.status === 429) {
+            btn.disabled = true;
+            btn.textContent = 'Limit Reached';
+          }
           results.innerHTML = `<div class="error-msg">${err.detail || 'Request failed.'}</div>`;
           return;
         }
 
         const data = await res.json();
+        if (data.requests_remaining !== undefined) {
+          btn.textContent = `Find Substitutes (${data.requests_remaining} left)`;
+        }
         renderResults(data);
       } catch (e) {
         results.innerHTML = `<div class="error-msg">Could not connect to API. Is the server running?</div>`;
