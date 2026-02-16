@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(mysql:*)",
+      "Bash(python:*)",
+      "Bash(pip install:*)",
+      "Bash(pip show:*)",
+      "Bash(docker --version:*)",
+      "Bash(where:*)",
+      "Bash(py:*)",
+      "Bash(uv venv:*)",
+      "Bash(.venv/Scripts/python.exe -m pip install:*)",
+      "Bash(uv pip install:*)",
+      "Bash(.venv/Scripts/python.exe:*)",
+      "Bash(curl:*)",
+      "Bash(netstat:*)",
+      "Bash(ss:*)",
+      "Bash(taskkill:*)"
+    ]
+  }
+}
