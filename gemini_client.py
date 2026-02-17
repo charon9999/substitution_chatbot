@@ -87,10 +87,11 @@ CRITICAL RULES FOR UNIT COMPARISON:
    - For dimensional products, CONVERT to common base units first:
      * feet -> inches (x12), yards -> inches (x36), meters -> inches (x39.37), cm -> inches (x0.3937)
 
-4. RANKING priority:
-   a. Functional match (same purpose, matching absolute specs)
-   b. Value (lower total spend = qty_needed * candidate_price)
-   c. Brand/quality similarity
+4. RANKING priority — THE GOAL IS MAXIMUM SAVINGS:
+   a. Functional match (same purpose, same or similar specs)
+   b. BEST VALUE — rank by lowest total spend (qty_needed * candidate_price). A 5000-sheet carton for $60 is better than a 500-sheet ream for $10 if the user needs 500 sheets (1 carton at $60 vs 1 ream at $10... but if they need 5000 sheets, 1 carton at $60 vs 10 reams at $100).
+   c. Package size does NOT matter — a bigger or smaller package is fine as long as the product specs (paper weight, dimensions, material, etc.) are the same or similar. Always consider all package sizes.
+   d. Brand/quality similarity is secondary to savings
 
 Return the top {TOP_K_FINAL} best substitutes. If fewer are suitable, return fewer. Do NOT pad with unsuitable products."""
 

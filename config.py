@@ -10,12 +10,12 @@ MYSQL_PASSWORD = os.getenv("MYSQL_PASSWORD", "")
 MYSQL_DB = os.getenv("MYSQL_DB", "staples_data")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_MODEL = "gemini-2.5-pro"
 
 CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
 CHROMA_COLLECTION = "products"
 
-TOP_K_VECTOR = 20
+TOP_K_VECTOR = 100
 TOP_K_FINAL = 5
 
-MAX_REQUESTS_PER_USER = int(os.getenv("MAX_REQUESTS_PER_USER", 10))
+MAX_REQUESTS_PER_USER = int(os.getenv("MAX_REQUESTS_PER_USER", 5))
