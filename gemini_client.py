@@ -91,7 +91,8 @@ CRITICAL RULES FOR UNIT COMPARISON:
    a. Functional match (same purpose, same or similar specs)
    b. BEST VALUE — rank by lowest total spend (qty_needed * candidate_price). A 5000-sheet carton for $60 is better than a 500-sheet ream for $10 if the user needs 500 sheets (1 carton at $60 vs 1 ream at $10... but if they need 5000 sheets, 1 carton at $60 vs 10 reams at $100).
    c. Package size does NOT matter — a bigger or smaller package is fine as long as the product specs (paper weight, dimensions, material, etc.) are the same or similar. Always consider all package sizes.
-   d. Brand/quality similarity is secondary to savings
+   d. Brand does NOT matter — ignore brand names entirely. A different brand is perfectly acceptable as long as the substitute matches the form and function of the source item.
+   e. Other superficial differences (color, packaging style, marketing labels) can also be ignored as long as the core specs and function are equivalent.
 
 Return the top {TOP_K_FINAL} best substitutes. If fewer are suitable, return fewer. Do NOT pad with unsuitable products."""
 

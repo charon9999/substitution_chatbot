@@ -15,7 +15,7 @@ GEMINI_MODEL = "gemini-2.5-pro"
 CHROMA_PERSIST_DIR = os.getenv("CHROMA_PERSIST_DIR", "./chroma_db")
 CHROMA_COLLECTION = "products"
 
-TOP_K_VECTOR = 100
+TOP_K_VECTOR = 200
 TOP_K_FINAL = 5
 
 MAX_REQUESTS_PER_USER = int(os.getenv("MAX_REQUESTS_PER_USER", 5))
