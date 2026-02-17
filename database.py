@@ -60,8 +60,16 @@ def get_product_specs(sku: str) -> dict[str, str]:
             return {row["name"]: row["spec_value"] for row in cur.fetchall()}
 
 
-def get_all_products_for_indexing() -> list[dict]:
-    """Fetch all active products with their categories, specs, and bullets for ChromaDB indexing."""
+def get_product_count() -> int:
+    """Get total count of active products."""
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) as cnt FROM products WHERE active = 1")
+            return cur.fetchone()["cnt"]
+
+
+def get_products_batch_for_indexing(offset: int, batch_size: int) -> list[dict]:
+    """Fetch a batch of products with categories, specs, and bullets for indexing."""
     with get_connection() as conn:
         with conn.cursor() as cur:
             cur.execute(
@@ -73,19 +81,21 @@ def get_all_products_for_indexing() -> list[dict]:
                 FROM products p
                 LEFT JOIN categories c ON p.sku = c.sku
                 WHERE p.active = 1
-                """
+                ORDER BY p.sku
+                LIMIT %s OFFSET %s
+                """,
+                (batch_size, offset),
             )
             products = cur.fetchall()
 
-    # Batch-fetch bullets and specs
-    skus = [p["sku"] for p in products]
-    if not skus:
+    if not products:
         return []
+
+    skus = [p["sku"] for p in products]
+    placeholders = ",".join(["%s"] * len(skus))
 
     with get_connection() as conn:
         with conn.cursor() as cur:
-            placeholders = ",".join(["%s"] * len(skus))
-
             cur.execute(
                 f"SELECT sku, bullet_text FROM product_bullets WHERE sku IN ({placeholders}) ORDER BY sku, display_order",
                 skus,

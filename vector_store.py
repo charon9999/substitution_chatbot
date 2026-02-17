@@ -2,7 +2,7 @@ import chromadb
 from chromadb.config import Settings
 
 from config import CHROMA_PERSIST_DIR, CHROMA_COLLECTION, TOP_K_VECTOR
-from database import get_all_products_for_indexing
+from database import get_product_count, get_products_batch_for_indexing
 
 
 def _get_client() -> chromadb.ClientAPI:
@@ -31,7 +31,7 @@ def _build_document(product: dict) -> str:
 
 
 def index_products():
-    """Index all products from MySQL into ChromaDB. Clears existing collection first."""
+    """Index all products from MySQL into ChromaDB. Streams in batches to handle large datasets."""
     client = _get_client()
 
     # Delete and recreate
@@ -44,32 +44,42 @@ def index_products():
         metadata={"hnsw:space": "cosine"},
     )
 
-    products = get_all_products_for_indexing()
-    if not products:
+    total = get_product_count()
+    if total == 0:
         print("No products found to index.")
         return
 
-    # ChromaDB has a batch limit, process in chunks
-    batch_size = 100
-    for i in range(0, len(products), batch_size):
-        batch = products[i : i + batch_size]
-        ids = [p["sku"] for p in batch]
-        documents = [_build_document(p) for p in batch]
-        metadatas = [
-            {
-                "supercategory": p.get("supercategory") or "",
-                "category": p.get("category") or "",
-                "class": p.get("class") or "",
-                "brand_name": p.get("brand_name") or "",
-                "web_price": float(p.get("web_price") or 0),
-                "uom": p.get("uom") or "",
-                "uom_qty": int(p.get("uom_qty") or 1),
-                "name": p.get("name") or "",
-            }
-            for p in batch
-        ]
-        collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
-        print(f"Indexed {min(i + batch_size, len(products))}/{len(products)} products")
+    print(f"Indexing {total} products...")
+    db_batch_size = 500  # Fetch from MySQL in batches of 500
+    chroma_batch_size = 100  # Upsert to ChromaDB in batches of 100
+    indexed = 0
+
+    for offset in range(0, total, db_batch_size):
+        products = get_products_batch_for_indexing(offset, db_batch_size)
+        if not products:
+            break
+
+        # Upsert to ChromaDB in smaller chunks
+        for i in range(0, len(products), chroma_batch_size):
+            batch = products[i : i + chroma_batch_size]
+            ids = [p["sku"] for p in batch]
+            documents = [_build_document(p) for p in batch]
+            metadatas = [
+                {
+                    "supercategory": p.get("supercategory") or "",
+                    "category": p.get("category") or "",
+                    "class": p.get("class") or "",
+                    "brand_name": p.get("brand_name") or "",
+                    "web_price": float(p.get("web_price") or 0),
+                    "uom": p.get("uom") or "",
+                    "uom_qty": int(p.get("uom_qty") or 1),
+                    "name": p.get("name") or "",
+                }
+                for p in batch
+            ]
+            collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
+            indexed += len(batch)
+            print(f"Indexed {indexed}/{total} products")
 
     print(f"Indexing complete. Total: {collection.count()} products in ChromaDB.")
 
