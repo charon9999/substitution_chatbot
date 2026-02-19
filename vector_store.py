@@ -67,7 +67,7 @@ def index_products():
         print("No products found to index.")
         return
 
-    print(f"Indexing {total} products into Qdrant...")
+    print(f"Indexing {total} products into Qdrant...", flush=True)
     indexed = 0
 
     for offset in range(0, total, _BATCH_SIZE_DB):
@@ -103,10 +103,11 @@ def index_products():
                 ids=ids,
             )
             indexed += len(batch)
-            print(f"Indexed {indexed}/{total} products")
+            pct = round(indexed / total * 100)
+            print(f"Indexed {indexed}/{total} products ({pct}%)", flush=True)
 
     info = client.get_collection(QDRANT_COLLECTION)
-    print(f"Indexing complete. Total: {info.points_count} products in Qdrant.")
+    print(f"Indexing complete. Total: {info.points_count} products in Qdrant.", flush=True)
 
 
 def search_similar_products(
