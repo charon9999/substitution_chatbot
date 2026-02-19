@@ -1,6 +1,52 @@
-from database import get_products_by_skus, get_product_bullets, get_product_specs
+import hashlib
+import time
+
+from config import CACHE_TTL
+from database import (
+    get_products_by_skus,
+    get_product_bullets_batch,
+    get_product_specs_batch,
+)
 from vector_store import search_similar_products
 from gemini_client import rank_substitutes
+
+# ---------------------------------------------------------------------------
+# Two-level in-memory cache (vector search results + Gemini ranking results)
+# Each entry: (timestamp, payload)
+# ---------------------------------------------------------------------------
+_search_cache: dict[str, tuple[float, list[dict]]] = {}
+_gemini_cache: dict[str, tuple[float, dict]] = {}
+
+
+def _search_key(query_text: str, supercategory: str, category: str) -> str:
+    return hashlib.md5(f"{query_text}|{supercategory}|{category}".encode()).hexdigest()
+
+
+def _gemini_key(source_item: dict) -> str:
+    parts = "|".join([
+        source_item["name"],
+        source_item.get("description", ""),
+        source_item["supercategory"],
+        source_item["category"],
+        str(source_item["quantity"]),
+        source_item.get("quantity_unit", ""),
+    ])
+    return hashlib.md5(parts.encode()).hexdigest()
+
+
+def _cache_get(store: dict, key: str):
+    if CACHE_TTL <= 0:
+        return None
+    entry = store.get(key)
+    if entry and (time.time() - entry[0]) < CACHE_TTL:
+        return entry[1]
+    store.pop(key, None)
+    return None
+
+
+def _cache_set(store: dict, key: str, value) -> None:
+    if CACHE_TTL > 0:
+        store[key] = (time.time(), value)
 
 
 def find_substitutes(source_item: dict) -> dict:
@@ -22,13 +68,17 @@ def find_substitutes(source_item: dict) -> dict:
         query_parts.append(source_item["description"])
     query_text = "\n".join(query_parts)
 
-    # 2. Search ChromaDB filtered by supercategory + category
-    candidates = search_similar_products(
-        query_text=query_text,
-        supercategory=supercategory,
-        category=category,
-        exclude_sku="",
-    )
+    # 2. Vector search — cached by (query_text, supercategory, category)
+    s_key = _search_key(query_text, supercategory, category)
+    candidates = _cache_get(_search_cache, s_key)
+    if candidates is None:
+        candidates = search_similar_products(
+            query_text=query_text,
+            supercategory=supercategory,
+            category=category,
+            exclude_sku="",
+        )
+        _cache_set(_search_cache, s_key, candidates)
 
     if not candidates:
         return {
@@ -37,26 +87,28 @@ def find_substitutes(source_item: dict) -> dict:
             "substitutes": [],
         }
 
-    # 3. Send candidates to Gemini for ranking (returns minimal fields)
-    gemini_result = rank_substitutes(
-        source_item=source_item,
-        candidates=candidates,
-    )
+    # 3. Gemini ranking — cached by (name, desc, supercategory, category, qty, unit)
+    g_key = _gemini_key(source_item)
+    gemini_result = _cache_get(_gemini_cache, g_key)
+    if gemini_result is None:
+        gemini_result = rank_substitutes(
+            source_item=source_item,
+            candidates=candidates,
+        )
+        _cache_set(_gemini_cache, g_key, gemini_result)
 
-    # 4. Enrich with DB data and compute savings
+    # 4. Enrich with DB data — single batch per field type (3 queries total)
     substitute_skus = [s["sku"] for s in gemini_result.get("substitutes", [])]
     db_products = {p["sku"]: p for p in get_products_by_skus(substitute_skus)}
+    bullets_map = get_product_bullets_batch(substitute_skus)
+    specs_map = get_product_specs_batch(substitute_skus)
 
+    # 5. Compute savings
     their_unit_price = float(source_item.get("unit_price") or 0)
     their_total_spend = float(source_item.get("total_price") or 0)
     user_quantity = float(source_item["quantity"])
 
-    # Derive total spend from whichever price the user provided
-    if their_total_spend > 0:
-        # User gave total — use it directly
-        pass
-    elif their_unit_price > 0:
-        # User gave unit price only — compute total
+    if their_total_spend <= 0 and their_unit_price > 0:
         their_total_spend = their_unit_price * user_quantity
 
     has_pricing = their_total_spend > 0 or their_unit_price > 0
@@ -98,10 +150,10 @@ def find_substitutes(source_item: dict) -> dict:
             "their_total_spend": round(their_total_spend, 2) if has_pricing else None,
             "savings": round(savings, 2) if savings is not None else None,
             "savings_percentage": savings_pct,
-            # Extra DB enrichment
+            # Enrichment from batch queries
             "product_details": _serialize_product(product),
-            "bullets": get_product_bullets(sku),
-            "specs": get_product_specs(sku),
+            "bullets": bullets_map.get(sku, []),
+            "specs": specs_map.get(sku, {}),
         })
 
     return {

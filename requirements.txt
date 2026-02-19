@@ -2,6 +2,6 @@ fastapi
 uvicorn
 pymysql
 python-dotenv
-chromadb
+qdrant-client[fastembed]
 google-genai
 pydantic

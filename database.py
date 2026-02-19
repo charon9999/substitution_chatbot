@@ -134,6 +134,45 @@ def get_categories() -> list[dict]:
             return cur.fetchall()
 
 
+def get_product_bullets_batch(skus: list[str]) -> dict[str, list[str]]:
+    """Fetch bullet points for multiple SKUs in one query. Returns {sku: [bullets]}."""
+    if not skus:
+        return {}
+    placeholders = ",".join(["%s"] * len(skus))
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"SELECT sku, bullet_text FROM product_bullets WHERE sku IN ({placeholders}) ORDER BY sku, display_order",
+                skus,
+            )
+            result: dict[str, list[str]] = {}
+            for row in cur.fetchall():
+                result.setdefault(row["sku"], []).append(row["bullet_text"])
+    return result
+
+
+def get_product_specs_batch(skus: list[str]) -> dict[str, dict[str, str]]:
+    """Fetch specs for multiple SKUs in one query. Returns {sku: {name: value}}."""
+    if not skus:
+        return {}
+    placeholders = ",".join(["%s"] * len(skus))
+    with get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"""
+                SELECT ps.sku, sn.name, ps.spec_value
+                FROM product_specifications ps
+                JOIN specification_names sn ON ps.spec_name_id = sn.id
+                WHERE ps.sku IN ({placeholders})
+                """,
+                skus,
+            )
+            result: dict[str, dict[str, str]] = {}
+            for row in cur.fetchall():
+                result.setdefault(row["sku"], {})[row["name"]] = row["spec_value"]
+    return result
+
+
 def get_products_by_skus(skus: list[str]) -> list[dict]:
     """Fetch full product details for a list of SKUs."""
     if not skus:

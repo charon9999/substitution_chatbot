@@ -15,7 +15,9 @@
       "Bash(curl:*)",
       "Bash(netstat:*)",
       "Bash(ss:*)",
-      "Bash(taskkill:*)"
+      "Bash(taskkill:*)",
+      "Bash(cd /f/substitution chatbot backend)",
+      "Bash(docker-compose logs:*)"
     ]
   }
 }

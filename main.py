@@ -1,4 +1,6 @@
+import asyncio
 from collections import defaultdict
+from datetime import date
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Request
@@ -12,13 +14,14 @@ from rag_pipeline import find_substitutes
 from vector_store import index_products
 from database import get_categories
 
-# In-memory request counter per IP
-_request_counts: dict[str, int] = defaultdict(int)
+# In-memory request counter per IP — resets daily
+# Stores {ip: (date, count)}
+_request_counts: dict[str, tuple[date, int]] = {}
 
 app = FastAPI(
     title="Product Substitution API",
-    description="RAG-based product substitution finder using ChromaDB + Gemini",
-    version="2.0.0",
+    description="RAG-based product substitution finder using Qdrant + Gemini",
+    version="2.1.0",
 )
 
 app.add_middleware(
@@ -41,25 +44,32 @@ class SubstitutionRequest(BaseModel):
 
 
 @app.post("/substitute")
-def get_substitutes(request: SubstitutionRequest, req: Request):
+async def get_substitutes(request: SubstitutionRequest, req: Request):
     """Find top 5 product substitutes with adjusted pricing and savings."""
     client_ip = req.client.host if req.client else "unknown"
+    today = date.today()
 
-    if _request_counts[client_ip] >= MAX_REQUESTS_PER_USER:
+    entry = _request_counts.get(client_ip)
+    count = (entry[1] if entry and entry[0] == today else 0)
+
+    if count >= MAX_REQUESTS_PER_USER:
         raise HTTPException(
             status_code=429,
-            detail=f"Rate limit reached ({MAX_REQUESTS_PER_USER} requests). Please contact support for more access.",
+            detail=f"Daily limit reached ({MAX_REQUESTS_PER_USER} requests). Resets at midnight.",
         )
 
-    _request_counts[client_ip] += 1
+    count += 1
+    _request_counts[client_ip] = (today, count)
     source_item = request.model_dump()
 
-    result = find_substitutes(source_item)
+    # Run the synchronous pipeline in a thread so the event loop stays free
+    loop = asyncio.get_running_loop()
+    result = await loop.run_in_executor(None, find_substitutes, source_item)
 
     if "error" in result:
         raise HTTPException(status_code=400, detail=result["error"])
 
-    result["requests_remaining"] = MAX_REQUESTS_PER_USER - _request_counts[client_ip]
+    result["requests_remaining"] = MAX_REQUESTS_PER_USER - count
     return result
 
 
@@ -70,9 +80,10 @@ def list_categories():
 
 
 @app.post("/index")
-def reindex_products():
-    """Re-index all products from MySQL into ChromaDB."""
-    index_products()
+async def reindex_products():
+    """Re-index all products from MySQL into Qdrant (runs in background thread)."""
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, index_products)
     return {"message": "Indexing complete."}
 
 

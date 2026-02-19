@@ -1,19 +1,26 @@
-import chromadb
-from chromadb.config import Settings
+import uuid
 
-from config import CHROMA_PERSIST_DIR, CHROMA_COLLECTION, TOP_K_VECTOR
+from qdrant_client import QdrantClient
+from qdrant_client.models import Filter, FieldCondition, MatchValue
+
+from config import QDRANT_HOST, QDRANT_PORT, QDRANT_COLLECTION, TOP_K_VECTOR
 from database import get_product_count, get_products_batch_for_indexing
 
 
-def _get_client() -> chromadb.ClientAPI:
-    return chromadb.PersistentClient(
-        path=CHROMA_PERSIST_DIR,
-        settings=Settings(anonymized_telemetry=False),
-    )
+def _sku_to_uuid(sku: str) -> str:
+    """Convert a SKU string to a deterministic UUID (Qdrant requires int or UUID IDs)."""
+    return str(uuid.uuid5(uuid.NAMESPACE_DNS, sku))
+
+_BATCH_SIZE_DB = 500
+_BATCH_SIZE_QDRANT = 100
+
+
+def _get_client() -> QdrantClient:
+    return QdrantClient(host=QDRANT_HOST, port=QDRANT_PORT)
 
 
 def _build_document(product: dict) -> str:
-    """Build a rich text document from product data for embedding."""
+    """Rich document used for embedding generation — good semantic coverage."""
     parts = [
         f"Product: {product['name']}",
         f"Brand: {product['brand_name'] or 'N/A'}",
@@ -30,42 +37,52 @@ def _build_document(product: dict) -> str:
     return "\n".join(parts)
 
 
+def _build_slim_document(product: dict) -> str:
+    """Compact document sent to Gemini — cuts prompt tokens by ~80%."""
+    parts = [
+        f"Product: {product['name']}",
+        f"Brand: {product['brand_name'] or 'N/A'}",
+        f"UOM: {product['uom_qty'] or 1} {product['uom'] or 'Each'}",
+        f"Customer Price: ${product['customer_price'] or product['web_price'] or 0}",
+    ]
+    if product.get("specs"):
+        specs = list(product["specs"].items())[:10]  # cap at 10 key specs
+        spec_str = "; ".join(f"{k}: {v}" for k, v in specs)
+        parts.append(f"Specifications: {spec_str}")
+    return "\n".join(parts)
+
+
 def index_products():
-    """Index all products from MySQL into ChromaDB. Streams in batches to handle large datasets."""
+    """Index all products from MySQL into Qdrant. Streams in batches."""
     client = _get_client()
 
-    # Delete and recreate
+    # Drop existing collection so re-index is always clean
     try:
-        client.delete_collection(CHROMA_COLLECTION)
+        client.delete_collection(QDRANT_COLLECTION)
     except Exception:
         pass
-    collection = client.get_or_create_collection(
-        name=CHROMA_COLLECTION,
-        metadata={"hnsw:space": "cosine"},
-    )
 
     total = get_product_count()
     if total == 0:
         print("No products found to index.")
         return
 
-    print(f"Indexing {total} products...")
-    db_batch_size = 500  # Fetch from MySQL in batches of 500
-    chroma_batch_size = 100  # Upsert to ChromaDB in batches of 100
+    print(f"Indexing {total} products into Qdrant...")
     indexed = 0
 
-    for offset in range(0, total, db_batch_size):
-        products = get_products_batch_for_indexing(offset, db_batch_size)
+    for offset in range(0, total, _BATCH_SIZE_DB):
+        products = get_products_batch_for_indexing(offset, _BATCH_SIZE_DB)
         if not products:
             break
 
-        # Upsert to ChromaDB in smaller chunks
-        for i in range(0, len(products), chroma_batch_size):
-            batch = products[i : i + chroma_batch_size]
-            ids = [p["sku"] for p in batch]
+        for i in range(0, len(products), _BATCH_SIZE_QDRANT):
+            batch = products[i: i + _BATCH_SIZE_QDRANT]
+
+            ids = [_sku_to_uuid(p["sku"]) for p in batch]
             documents = [_build_document(p) for p in batch]
             metadatas = [
                 {
+                    "sku": p["sku"],
                     "supercategory": p.get("supercategory") or "",
                     "category": p.get("category") or "",
                     "class": p.get("class") or "",
@@ -74,14 +91,22 @@ def index_products():
                     "uom": p.get("uom") or "",
                     "uom_qty": int(p.get("uom_qty") or 1),
                     "name": p.get("name") or "",
+                    "slim_doc": _build_slim_document(p),  # stored for Gemini prompt
                 }
                 for p in batch
             ]
-            collection.upsert(ids=ids, documents=documents, metadatas=metadatas)
+
+            client.add(
+                collection_name=QDRANT_COLLECTION,
+                documents=documents,
+                metadata=metadatas,
+                ids=ids,
+            )
             indexed += len(batch)
             print(f"Indexed {indexed}/{total} products")
 
-    print(f"Indexing complete. Total: {collection.count()} products in ChromaDB.")
+    info = client.get_collection(QDRANT_COLLECTION)
+    print(f"Indexing complete. Total: {info.points_count} products in Qdrant.")
 
 
 def search_similar_products(
@@ -93,35 +118,35 @@ def search_similar_products(
 ) -> list[dict]:
     """Search for similar products filtered by supercategory and category."""
     client = _get_client()
-    collection = client.get_collection(CHROMA_COLLECTION)
 
-    # Build filter: must match supercategory AND category, exclude the source SKU
-    where_filter = {
-        "$and": [
-            {"supercategory": {"$eq": supercategory}},
-            {"category": {"$eq": category}},
+    query_filter = Filter(
+        must=[
+            FieldCondition(key="supercategory", match=MatchValue(value=supercategory)),
+            FieldCondition(key="category", match=MatchValue(value=category)),
         ]
-    }
+    )
 
-    results = collection.query(
-        query_texts=[query_text],
-        n_results=n_results + 1,  # +1 in case source product is in results
-        where=where_filter,
+    results = client.query(
+        collection_name=QDRANT_COLLECTION,
+        query_text=query_text,
+        query_filter=query_filter,
+        limit=n_results + 1,  # +1 in case source product appears
     )
 
     candidates = []
-    if results and results["ids"] and results["ids"][0]:
-        for idx, sku in enumerate(results["ids"][0]):
-            if sku == exclude_sku:
-                continue
-            candidates.append(
-                {
-                    "sku": sku,
-                    "distance": results["distances"][0][idx] if results.get("distances") else None,
-                    "metadata": results["metadatas"][0][idx] if results.get("metadatas") else {},
-                    "document": results["documents"][0][idx] if results.get("documents") else "",
-                }
-            )
+    for result in results:
+        sku = result.metadata.get("sku", "")
+        if exclude_sku and sku == exclude_sku:
+            continue
+        candidates.append(
+            {
+                "sku": sku,
+                "score": result.score,
+                "metadata": result.metadata,
+                # slim_doc is what Gemini sees — keeps prompt token count low
+                "document": result.metadata.get("slim_doc", result.document or ""),
+            }
+        )
 
     return candidates[:n_results]
 

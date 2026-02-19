@@ -2,7 +2,7 @@ import json
 
 from google import genai
 from google.genai import types
-from config import GEMINI_API_KEY, GEMINI_MODEL, TOP_K_FINAL
+from config import GEMINI_API_KEY, GEMINI_RANKING_MODEL, TOP_K_FINAL
 
 
 client = genai.Client(api_key=GEMINI_API_KEY)
@@ -47,8 +47,9 @@ def rank_substitutes(
     source_item: dict,
     candidates: list[dict],
 ) -> dict:
-    """Use Gemini with schema enforcement to rank candidates. Returns only fields Gemini must determine."""
+    """Use Gemini Flash with schema enforcement to rank candidates. Returns only fields Gemini must determine."""
 
+    # Each candidate already contains a slim document (trimmed by vector_store)
     candidates_info = "\n\n".join(
         f"--- Candidate {i+1} (SKU: {c['sku']}) ---\n{c['document']}"
         for i, c in enumerate(candidates)
@@ -97,7 +98,7 @@ CRITICAL RULES FOR UNIT COMPARISON:
 Return the top {TOP_K_FINAL} best substitutes. If fewer are suitable, return fewer. Do NOT pad with unsuitable products."""
 
     response = client.models.generate_content(
-        model=GEMINI_MODEL,
+        model=GEMINI_RANKING_MODEL,
         contents=prompt,
         config=types.GenerateContentConfig(
             responseMimeType="application/json",
