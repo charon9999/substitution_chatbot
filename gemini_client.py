@@ -71,8 +71,17 @@ CANDIDATE PRODUCTS FROM OUR CATALOG:
 
 CRITICAL RULES FOR UNIT COMPARISON:
 
+0. MULTI-PACK SOURCE ITEMS — always compute total individual units first:
+   - If the source item name or quantity_unit indicates a multi-pack (e.g. "36 Count", "12-pack", "case of 500", "36 / Pack"), multiply:
+     total_individual_units = quantity × units_per_pack
+   - Use total_individual_units as the basis for ALL qty_needed calculations below.
+   - Example: quantity=200, quantity_unit="36 / Pack" → total = 200 × 36 = 7,200 individual pens.
+     A candidate sold as a 12-pack needs ceil(7200 / 12) = 600 units.
+   - Example: quantity=5, quantity_unit="Case / 500 sheets" → total = 5 × 500 = 2,500 sheets.
+   - If the source item is sold individually (each, unit, ea) with no multiplier, total = quantity as-is.
+
 1. CLASSIFY each product attribute as DIVISIBLE or ABSOLUTE:
-   - DIVISIBLE units CAN be scaled/split: sheets, pages, rolls, feet, inches, yards, meters, ml, oz, lbs, sq ft, etc.
+   - DIVISIBLE units CAN be scaled/split: sheets, pages, rolls, feet, inches, yards, meters, ml, oz, lbs, sq ft, individual pens/pencils, etc.
    - ABSOLUTE units CANNOT be scaled: tabs (in a folder), compartments, drawers, holes, ports, pockets, dividers, slots, buttons, keys, etc.
 
 2. For ABSOLUTE attributes:
@@ -81,6 +90,7 @@ CRITICAL RULES FOR UNIT COMPARISON:
    - Do NOT include candidates with mismatched absolute specs.
 
 3. For DIVISIBLE units, calculate qty_needed (always round UP to next whole number):
+   - Always use the total_individual_units computed in Rule 0 as the numerator.
    - Example: User buys 500 sheets. Candidate sells 5000 sheets/case.
      qty_needed = ceil(500 / 5000) = 1 unit needed
    - Example: User buys 2000 sheets. Candidate sells 500 sheets/ream.

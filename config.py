@@ -17,7 +17,7 @@ QDRANT_HOST = os.getenv("QDRANT_HOST", "qdrant")
 QDRANT_PORT = int(os.getenv("QDRANT_PORT", 6333))
 QDRANT_COLLECTION = "products"
 
-TOP_K_VECTOR = 50   # Candidates fetched from Qdrant (was 200)
+TOP_K_VECTOR = 25   # Candidates fetched from Qdrant and sent to Gemini
 TOP_K_FINAL = 5
 
 MAX_REQUESTS_PER_USER = int(os.getenv("MAX_REQUESTS_PER_USER", 10))
