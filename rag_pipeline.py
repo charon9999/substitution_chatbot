@@ -49,9 +49,14 @@ def _cache_set(store: dict, key: str, value) -> None:
         store[key] = (time.time(), value)
 
 
-def find_substitutes(source_item: dict) -> dict:
+def find_substitutes(source_item: dict):
     """
-    Full RAG pipeline for user-provided item.
+    Full RAG pipeline for user-provided item. Yields SSE event dicts.
+
+    Event types:
+        {"type": "status", "message": "..."}
+        {"type": "result", "data": {...}}
+        {"type": "error",  "message": "..."}
 
     source_item keys:
         name, description, supercategory, category, quantity, quantity_unit, unit_price, total_price
@@ -60,13 +65,16 @@ def find_substitutes(source_item: dict) -> dict:
     category = source_item.get("category", "")
 
     if not supercategory or not category:
-        return {"error": "Both supercategory and category are required."}
+        yield {"type": "error", "message": "Both supercategory and category are required."}
+        return
 
     # 1. Build query text from user-provided item details
     query_parts = [source_item["name"]]
     if source_item.get("description"):
         query_parts.append(source_item["description"])
     query_text = "\n".join(query_parts)
+
+    yield {"type": "status", "message": "Searching catalog..."}
 
     # 2. Vector search — cached by (query_text, supercategory, category)
     s_key = _search_key(query_text, supercategory, category)
@@ -81,11 +89,14 @@ def find_substitutes(source_item: dict) -> dict:
         _cache_set(_search_cache, s_key, candidates)
 
     if not candidates:
-        return {
+        yield {"type": "result", "data": {
             "source_item": source_item,
             "message": f"No candidate products found in '{supercategory} > {category}'.",
             "substitutes": [],
-        }
+        }}
+        return
+
+    yield {"type": "status", "message": f"Found {len(candidates)} candidates — AI is ranking..."}
 
     # 3. Gemini ranking — cached by (name, desc, supercategory, category, qty, unit)
     g_key = _gemini_key(source_item)
@@ -96,6 +107,8 @@ def find_substitutes(source_item: dict) -> dict:
             candidates=candidates,
         )
         _cache_set(_gemini_cache, g_key, gemini_result)
+
+    yield {"type": "status", "message": "Ranking complete, fetching product details..."}
 
     # 4. Enrich with DB data — single batch per field type (3 queries total)
     substitute_skus = [s["sku"] for s in gemini_result.get("substitutes", [])]
@@ -156,11 +169,11 @@ def find_substitutes(source_item: dict) -> dict:
             "specs": specs_map.get(sku, {}),
         })
 
-    return {
+    yield {"type": "result", "data": {
         "source_item": source_item,
         "candidates_evaluated": len(candidates),
         "substitutes": substitutes,
-    }
+    }}
 
 
 def _serialize_product(product: dict) -> dict:

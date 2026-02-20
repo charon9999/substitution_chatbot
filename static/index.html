@@ -133,7 +133,7 @@
 
     <div class="loading" id="loading">
       <div class="spinner"></div>
-      <span>Searching for substitutes and calculating savings...</span>
+      <span id="loadingMsg">Searching for substitutes and calculating savings...</span>
     </div>
 
     <div id="results"></div>
@@ -190,11 +190,15 @@
 
       const btn = document.getElementById('submitBtn');
       const loading = document.getElementById('loading');
+      const loadingMsg = document.getElementById('loadingMsg');
       const results = document.getElementById('results');
 
       btn.disabled = true;
       loading.classList.add('active');
+      loadingMsg.textContent = 'Searching catalog...';
       results.innerHTML = '';
+
+      let limitReached = false;
 
       try {
         const res = await fetch(`${API}/substitute`, {
@@ -206,22 +210,45 @@
         if (!res.ok) {
           const err = await res.json();
           if (res.status === 429) {
-            btn.disabled = true;
+            limitReached = true;
             btn.textContent = 'Limit Reached';
           }
           results.innerHTML = `<div class="error-msg">${err.detail || 'Request failed.'}</div>`;
           return;
         }
 
-        const data = await res.json();
-        if (data.requests_remaining !== undefined) {
-          btn.textContent = `Find Substitutes (${data.requests_remaining} left)`;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop(); // hold incomplete line for next chunk
+
+          for (const line of lines) {
+            if (!line.startsWith('data: ')) continue;
+            const event = JSON.parse(line.slice(6));
+
+            if (event.type === 'status') {
+              loadingMsg.textContent = event.message;
+            } else if (event.type === 'result') {
+              if (event.data.requests_remaining !== undefined) {
+                btn.textContent = `Find Substitutes (${event.data.requests_remaining} left)`;
+              }
+              renderResults(event.data);
+            } else if (event.type === 'error') {
+              results.innerHTML = `<div class="error-msg">${event.message}</div>`;
+            }
+          }
         }
-        renderResults(data);
       } catch (e) {
         results.innerHTML = `<div class="error-msg">Could not connect to API. Is the server running?</div>`;
       } finally {
-        btn.disabled = false;
+        if (!limitReached) btn.disabled = false;
         loading.classList.remove('active');
       }
     }

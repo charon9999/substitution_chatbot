@@ -1,4 +1,5 @@
 import asyncio
+import json
 from collections import defaultdict
 from datetime import date
 from pathlib import Path
@@ -6,7 +7,7 @@ from pathlib import Path
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel
 
 from config import MAX_REQUESTS_PER_USER
@@ -45,7 +46,7 @@ class SubstitutionRequest(BaseModel):
 
 @app.post("/substitute")
 async def get_substitutes(request: SubstitutionRequest, req: Request):
-    """Find top 5 product substitutes with adjusted pricing and savings."""
+    """Find top 5 product substitutes with adjusted pricing and savings. Streams SSE events."""
     client_ip = req.client.host if req.client else "unknown"
     today = date.today()
 
@@ -61,16 +62,36 @@ async def get_substitutes(request: SubstitutionRequest, req: Request):
     count += 1
     _request_counts[client_ip] = (today, count)
     source_item = request.model_dump()
+    requests_remaining = MAX_REQUESTS_PER_USER - count
 
-    # Run the synchronous pipeline in a thread so the event loop stays free
-    loop = asyncio.get_running_loop()
-    result = await loop.run_in_executor(None, find_substitutes, source_item)
+    async def event_stream():
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue = asyncio.Queue()
 
-    if "error" in result:
-        raise HTTPException(status_code=400, detail=result["error"])
+        def run_pipeline():
+            try:
+                for event in find_substitutes(source_item):
+                    loop.call_soon_threadsafe(queue.put_nowait, event)
+            except Exception as e:
+                loop.call_soon_threadsafe(queue.put_nowait, {"type": "error", "message": str(e)})
+            finally:
+                loop.call_soon_threadsafe(queue.put_nowait, None)  # sentinel
 
-    result["requests_remaining"] = MAX_REQUESTS_PER_USER - count
-    return result
+        loop.run_in_executor(None, run_pipeline)
+
+        while True:
+            event = await queue.get()
+            if event is None:
+                break
+            if event.get("type") == "result":
+                event["data"]["requests_remaining"] = requests_remaining
+            yield f"data: {json.dumps(event)}\n\n"
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 
 @app.get("/categories")
